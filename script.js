@@ -1,55 +1,53 @@
 const solanaWeb3 = require('@solana/web3.js');
-const splToken = require('@solana/spl-token');
+const { Market, OpenOrders } = require('@project-serum/serum');
+
+const SOL_MINT_ADDRESS = "So11111111111111111111111111111111111111112";
+const DOGWIFTHAT_MINT_ADDRESS = "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm";
 
 const connection = new solanaWeb3.Connection(solanaWeb3.clusterApiUrl('mainnet-beta'), 'confirmed');
-const wallet = solanaWeb3.Keypair.generate(); // Replace this with your wallet
-
-// Token Mints
-const SOL_MINT_ADDRESS = 'So11111111111111111111111111111111111111112';
-const DOG_TOKEN_MINT_ADDRESS = 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm';
 
 async function swapTokens() {
-    // Fetch the token accounts
-    const solMint = new solanaWeb3.PublicKey(SOL_MINT_ADDRESS);
-    const dogMint = new solanaWeb3.PublicKey(DOG_TOKEN_MINT_ADDRESS);
-    
-    const solTokenAccount = await splToken.Token.getAssociatedTokenAddress(
-        splToken.ASSOCIATED_TOKEN_PROGRAM_ID,
-        splToken.TOKEN_PROGRAM_ID,
-        solMint,
-        wallet.publicKey
-    );
-    
-    const dogTokenAccount = await splToken.Token.getAssociatedTokenAddress(
-        splToken.ASSOCIATED_TOKEN_PROGRAM_ID,
-        splToken.TOKEN_PROGRAM_ID,
-        dogMint,
-        wallet.publicKey
-    );
+    const payer = solanaWeb3.Keypair.fromSecretKey(new Uint8Array(JSON.parse(process.env.SOLANA_SECRET_KEY)));
 
-    // Create the Token Swap transaction
-    const tokenSwapTransaction = new solanaWeb3.Transaction().add(
-        splToken.Token.createTransferInstruction(
-            splToken.TOKEN_PROGRAM_ID,
-            solTokenAccount,
-            dogTokenAccount,
-            wallet.publicKey,
-            [],
-            1000000 // Amount to swap (example value)
-        )
-    );
+    const marketAddress = new solanaWeb3.PublicKey('Market_Address'); 
+    const market = await Market.load(connection, marketAddress, {}, solanaWeb3.PublicKey.default);
 
-    // Send the transaction
-    const signature = await solanaWeb3.sendAndConfirmTransaction(connection, tokenSwapTransaction, [wallet]);
-    console.log('Transaction confirmed with signature:', signature);
+    const baseMint = new solanaWeb3.PublicKey(SOL_MINT_ADDRESS);
+    const quoteMint = new solanaWeb3.PublicKey(DOGWIFTHAT_MINT_ADDRESS);
+
+    const owner = payer.publicKey;
+    const openOrders = await OpenOrders.findForOwner(connection, owner, market.address, solanaWeb3.PublicKey.default);
+    
+    const [baseVault, quoteVault] = await Promise.all([
+        market.findOpenOrdersAccountsForOwner(owner),
+        market.findOpenOrdersAccountsForOwner(owner),
+    ]);
+
+    const transaction = new solanaWeb3.Transaction();
+
+    const instruction = market.makePlaceOrderInstruction(connection, {
+        owner,
+        payer: baseVault[0].baseTokenAccount,
+        side: 'sell', 
+        price: 1.0, 
+        size: 1.0, 
+        orderType: 'limit',
+        clientId: new solanaWeb3.BN(123),
+        openOrdersAddressKey: openOrders[0].address,
+        feeDiscountPubkey: null,
+    });
+
+    transaction.add(instruction);
+    transaction.feePayer = payer.publicKey;
+    const recentBlockhash = await connection.getRecentBlockhash();
+    transaction.recentBlockhash = recentBlockhash.blockhash;
+
+    transaction.sign(payer);
+
+    const signature = await connection.sendRawTransaction(transaction.serialize());
+    await connection.confirmTransaction(signature);
+
+    console.log("Transaction completed with signature:", signature);
 }
 
-// Ensure you have funds and the associated token accounts
-(async () => {
-    // Airdrop SOL to the wallet for transaction fees
-    const airdropSignature = await connection.requestAirdrop(wallet.publicKey, solanaWeb3.LAMPORTS_PER_SOL);
-    await connection.confirmTransaction(airdropSignature);
-
-    // Swap tokens
-    await swapTokens();
-})();
+swapTokens().catch(console.error);

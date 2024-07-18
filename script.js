@@ -1,53 +1,46 @@
-const solanaWeb3 = require('@solana/web3.js');
-const { Market, OpenOrders } = require('@project-serum/serum');
+const solanaWeb3 = require("@solana/web3.js");
+const splToken = require("@solana/spl-token");
 
 const SOL_MINT_ADDRESS = "So11111111111111111111111111111111111111112";
 const DOGWIFTHAT_MINT_ADDRESS = "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm";
+const SOLANA_NETWORK = solanaWeb3.clusterApiUrl("mainnet-beta");
+const connection = new solanaWeb3.Connection(SOLANA_NETWORK, "confirmed");
+const fromWallet = solanaWeb3.Keypair.generate();
+const toWallet = solanaWeb3.Keypair.generate();
 
-const connection = new solanaWeb3.Connection(solanaWeb3.clusterApiUrl('mainnet-beta'), 'confirmed');
+(async () => {
+  const airdropSignature = await connection.requestAirdrop(
+    fromWallet.publicKey,
+    solanaWeb3.LAMPORTS_PER_SOL
+  );
+  await connection.confirmTransaction(airdropSignature);
+  const solMint = new solanaWeb3.PublicKey(SOL_MINT_ADDRESS);
+  const dogwifthatMint = new solanaWeb3.PublicKey(DOGWIFTHAT_MINT_ADDRESS);
+  const fromTokenAccount = await splToken.getOrCreateAssociatedTokenAccount(
+    connection,
+    fromWallet,
+    solMint,
+    fromWallet.publicKey
+  );
 
-async function swapTokens() {
-    const payer = solanaWeb3.Keypair.fromSecretKey(new Uint8Array(JSON.parse(process.env.SOLANA_SECRET_KEY)));
+  const toTokenAccount = await splToken.getOrCreateAssociatedTokenAccount(
+    connection,
+    toWallet,
+    dogwifthatMint,
+    toWallet.publicKey
+  );
+  const transaction = new solanaWeb3.Transaction().add(
+    solanaWeb3.SystemProgram.transfer({
+      fromPubkey: fromWallet.publicKey,
+      toPubkey: toWallet.publicKey,
+      lamports: solanaWeb3.LAMPORTS_PER_SOL / 100,
+    })
+  );
+  const signature = await solanaWeb3.sendAndConfirmTransaction(
+    connection,
+    transaction,
+    [fromWallet]
+  );
 
-    const marketAddress = new solanaWeb3.PublicKey('Market_Address'); 
-    const market = await Market.load(connection, marketAddress, {}, solanaWeb3.PublicKey.default);
-
-    const baseMint = new solanaWeb3.PublicKey(SOL_MINT_ADDRESS);
-    const quoteMint = new solanaWeb3.PublicKey(DOGWIFTHAT_MINT_ADDRESS);
-
-    const owner = payer.publicKey;
-    const openOrders = await OpenOrders.findForOwner(connection, owner, market.address, solanaWeb3.PublicKey.default);
-    
-    const [baseVault, quoteVault] = await Promise.all([
-        market.findOpenOrdersAccountsForOwner(owner),
-        market.findOpenOrdersAccountsForOwner(owner),
-    ]);
-
-    const transaction = new solanaWeb3.Transaction();
-
-    const instruction = market.makePlaceOrderInstruction(connection, {
-        owner,
-        payer: baseVault[0].baseTokenAccount,
-        side: 'sell', 
-        price: 1.0, 
-        size: 1.0, 
-        orderType: 'limit',
-        clientId: new solanaWeb3.BN(123),
-        openOrdersAddressKey: openOrders[0].address,
-        feeDiscountPubkey: null,
-    });
-
-    transaction.add(instruction);
-    transaction.feePayer = payer.publicKey;
-    const recentBlockhash = await connection.getRecentBlockhash();
-    transaction.recentBlockhash = recentBlockhash.blockhash;
-
-    transaction.sign(payer);
-
-    const signature = await connection.sendRawTransaction(transaction.serialize());
-    await connection.confirmTransaction(signature);
-
-    console.log("Transaction completed with signature:", signature);
-}
-
-swapTokens().catch(console.error);
+  console.log("Transaction confirmed", signature);
+})();
